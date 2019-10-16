@@ -1,0 +1,74 @@
+#Load packages
+library(tidytext)
+library(ggplot2)
+library(gutenbergr)
+library(tidyr)
+library(textdata)
+library(wordcloud)
+
+source("//Millyard.snhu.edu/Data/DataWebServices/DATA GROUP/Kyle/scripts/library.r")
+
+#Setup Data Connection to SQL Database
+con <- dbConnect(odbc::odbc(), .connection_string = "Driver={SQL Server Native Client 11.0};
+                 Database=MSR;
+                 Server=SQL-1E\\COCE_DEV_DS;
+                 trusted_connection=yes;")
+
+#Pull information from students survey SQL table
+CourseComments_df <- dbGetQuery(con, "SELECT course_comments,TERM,AcademicLevel='UG'
+                                FROM dbo.SummativeReportsUG2
+                                UNION ALL
+                                SELECT course_comments,term,AcademicLevel='GR'
+                                FROM dbo.SummativeReportsGR2")
+
+#Tokenize data set so 1 word per row
+CourseComments<-CourseComments_df %>% 
+  unnest_tokens(word,course_comments)
+
+#Apply Stop Words
+data(stop_words)
+stop_words
+
+#Add stopwords
+custom.stopwords<-data.frame(word=c('snhu','university','school','also','make','think','get','thing','one',
+                                    'just','feel','can','will','work','impending','nothing','na','NA ','NA-','change'),lexicon='custom')
+stop_words<-rbind(stop_words,custom.stopwords)
+
+CommentWordsClean <- CourseComments %>%
+  anti_join(stop_words)
+CommentWordsClean2<-CommentWordsClean %>% drop_na()
+
+#Count distribution of words
+CommentWordsClean2 %>%
+  count(word, sort = TRUE) 
+
+#Frequency distibution of words graph
+CommentWordsClean2 %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 20000) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+
+
+#Word Cloud
+CommentWordsClean2 %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.word = 20))
+
+
+
+#Leicon Stuff
+get_sentiments("nrc")
+
+nrc_fear <- get_sentiments("nrc") %>% 
+  filter(sentiment == "fear")
+
+CommentWordsClean2 %>%
+  #filter(book == "Emma") %>%
+  inner_join(nrc_joy) %>%
+  count(word, sort = TRUE)
+
+
