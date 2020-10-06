@@ -1,0 +1,137 @@
+# ----- set up ----- 
+
+# Load packages
+library(odbc)       # database interaction 
+library(tidyverse)  # data manipulation has 8 packages inside
+library(wordcloud)  # making word clouds
+library(tidytext)   # tidy principles for text
+library(textdata)   # access to text-related data sets for easy access
+library(gutenbergr) # download and process public domain works
+library(sentimentr)
+library(quanteda)
+library(stm)
+
+## read csv file 
+
+LMS_UG <- readr::read_csv("C:/Users/k.lawrence1/Documents/2020_LMS_UG.csv")
+
+LMS_UG_Q11 <- data.frame(LMS_UG$Q11)
+
+
+##### QUANTEDA AND STM FUNCTIONS
+##### EXPLORATORY TOPIC MODELING
+
+
+## create corpus
+
+corpus_q11 <- corpus(LMS_UG$Q11)
+
+## tokenize
+
+tokens(corpus_q11)
+
+## create document-feature matrix and remove stop words
+
+####my_dfm <- dfm(LMS_UG$Q11)
+dfm_q11 <- dfm(corpus_q11, remove = stopwords("english"), stem = TRUE)
+
+## word cloud
+
+set.seed(100)
+textplot_wordcloud(dfm_q11, min_count = 6, random_order = FALSE, rotation = .25)
+
+## find topics
+
+quant_dfm <- dfm_trim(dfm_q11, min_termfreq = 4, max_termfreq = 10)
+
+lda_q11 <- stm(quant_dfm, K = 20, verbose = FALSE)
+plot(lda_q11)
+
+
+cloud(lda_q11, topic = 17)
+cloud(lda_q11, topic = 10)
+modcorrq11 <- topicCorr(lda_q11)
+
+plot(modcorrq11)
+
+cloud(lda_q11, topic = 20)
+cloud(lda_q11, topic = 14)
+cloud(lda_q11, topic = 16)
+
+
+
+
+###### TIDYTEXT AND TIDYVERSE
+###### N GRAMS 
+
+## tokenize and remove stop words, remove NAs
+
+unnested_df_Q11 <- LMS_UG %>% unnest_tokens(word, Q11)
+
+data("stop_words")
+
+
+custom.stopwords <- data.frame(
+  word = c('na', 'NA', 'n/a', 'N/A', 'nothing', 'Nothing'), lexicon = 'custom'
+  )
+
+stop_words <- rbind(
+  stop_words, custom.stopwords
+  )
+
+
+clean_unnested_df_q11 <- unnested_df_Q11 %>% 
+  anti_join(stop_words)
+
+#### don't use this funtion it's removing everything
+##
+
+##clean_unnested_df_q11 <- clean_unnested_df_q11 %>%
+##  drop_na()
+
+
+bigrams_q11 <- clean_unnested_df_q11 %>%
+  unnest_tokens(word, word, token = "ngrams", n = 2)
+
+
+### this didn't do anything, maybe was already taken out in step above
+## clean_bigrams_q11 <- bigrams_q11 %>%
+##  filter(!word %in% stop_words$word)
+
+clean_bigrams_q11 %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 5 ) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  labs(y = "Count",
+       x = "bigram") +
+  coord_flip()
+
+clean_bigrams_q11 %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.word= 50))
+
+
+
+
+## trigrams
+
+trigrams_q11 <- clean_unnested_df_q11 %>%
+  unnest_tokens(word, word, token = "ngrams", n = 3)
+
+trigrams_q11 %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 2 ) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  labs(y = "Count",
+       x = "bigram") +
+  coord_flip()
+
+trigrams_q11 %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.word= 50))
