@@ -1,0 +1,529 @@
+# ----- set up ----- 
+
+# Load packages
+library(odbc)       # database interaction 
+library(tidyverse)  # data manipulation has 8 packages inside
+library(wordcloud)  # making word clouds
+library(tidytext)   # tidy principles for text
+library(textdata)   # access to text-related data sets for easy access
+library(gutenbergr) # download and process public domain works
+library(reshape2)
+library(sentimentr)
+library(DBI)
+
+# Setup Data Connection to SQL Database
+con <- dbConnect(
+  odbc::odbc()
+  , .connection_string = "Driver={SQL Server Native Client 11.0};
+                 Database=MSR;
+                 Server=COCE-DS-LSTNR,50222;
+                 trusted_connection=yes;"
+)
+
+# ----- data pull ----- 
+
+#Pull information from students survey SQL table
+course_comments_df <- dbGetQuery(
+  conn = con
+  , statement = "SELECT 
+                      course_comments as CourseCommentsTokenized
+                      ,course_comments
+                      ,left(crsnum,7) Course
+                      ,row_number() over (order by course_comments) as Join_Field
+                      ,instructor_comments as InstructorCommentsTokenized
+                      ,instructor_comments
+                    , ug2.TERM
+                    , AcademicLevel='UG'
+                    ,datestart
+                    ,crsname
+                    ,crsnum
+                    ,crs_dir
+                    ,resp_fac
+                    ,Case When [NewFormat_Would.you.register.for.another.course.with.this.instructor.]=2 Then 'Yes' 
+                          When [NewFormat_Would.you.register.for.another.course.with.this.instructor.]=1 Then 'No' END RegisterAnotherCourseWithInstructor
+                   ,Case When [NewFormat_I.used.the.required.course.materials.and.or.learning.resources..e.g...Pearson..lab..textbook..etc...]=2 Then 'Yes' 
+                          When [NewFormat_I.used.the.required.course.materials.and.or.learning.resources..e.g...Pearson..lab..textbook..etc...]=1 Then 'No' END UsedCourseMaterial     
+                    ,overall_course_satisfaction
+                    ,overall_instructor_satisfaction
+					,CASE WHEN cs.IsInnovationScholarshipSection=1 THEN 'Yes' ELSE 'No' END InnovationScholar
+                 FROM dbo.SummativeReportsUG2 ug2
+				 LEFT JOIN [COCE-LSTNR,50333].[aardw].[aarpl].CourseSection AS cs
+					ON cs.SectionName=CONCAT(LEFT(crsnum,7),'-',RIGHT(crsnum,5))
+                 where datestart >='12/13/2018'
+                    UNION ALL
+                        SELECT 
+                          course_comments as CourseCommentsTokenized
+                      ,course_comments
+                      ,left(crsnum,7) Course
+                      ,row_number() over (order by course_comments) as Join_Field
+                      ,instructor_comments as InstructorCommentsTokenized
+                      ,instructor_comments
+                    , gr2.TERM
+                    , AcademicLevel='GR'
+                    ,datestart
+                    ,crsname
+                    ,crsnum
+                    ,crs_dir
+                    ,resp_fac
+                    ,Case When [NewFormat_Would.you.register.for.another.course.with.this.instructor.]=2 Then 'Yes' 
+                          When [NewFormat_Would.you.register.for.another.course.with.this.instructor.]=1 Then 'No' END RegisterAnotherCourseWithInstructor
+                   ,Case When [NewFormat_I.used.the.required.course.materials.and.or.learning.resources..e.g...Pearson..lab..textbook..etc...]=2 Then 'Yes' 
+                          When [NewFormat_I.used.the.required.course.materials.and.or.learning.resources..e.g...Pearson..lab..textbook..etc...]=1 Then 'No' END UsedCourseMaterial     
+                    ,overall_course_satisfaction
+                    ,overall_instructor_satisfaction
+					,CASE WHEN cs.IsInnovationScholarshipSection=1 THEN 'Yes' ELSE 'No' END InnovationScholar
+                        FROM dbo.SummativeReportsGR2 gr2
+					LEFT JOIN [COCE-LSTNR,50333].[aardw].[aarpl].CourseSection AS cs
+					ON cs.SectionName=CONCAT(LEFT(crsnum,7),'-',RIGHT(crsnum,5))
+                        where datestart >='02/24/2019'"
+)
+
+# ----- data manipulation ----- 
+course_comments_only<- course_comments_df  %>% select(course_comments)
+instructor_comments_only<- course_comments_df %>% select(instructor_comments)
+
+course_sentences_only<-get_sentences(course_comments_only)
+instructor_sentences_only<-get_sentences(instructor_comments_only)                                    
+
+course_sentence_sentimate<-sentiment(course_sentences_only)
+instructor_sentence_sentimate<-sentiment(instructor_sentences_only)
+
+
+
+
+course_sentence_sentimate<-course_sentence_sentimate %>% 
+  #inner_join(y = Unigram_Afinn_Contribution, b = c("word1" = "word")) %>% 
+  # inner_join(y = Unigram_Afinn_Contribution, b = c("word2" = "word")) %>% 
+  
+  
+  select(course_comments,sentiment
+         
+  ) %>% 
+  mutate(
+    # value 
+    Course_Sentimentt = case_when(is.na(sentiment) ~ 0,
+                                  TRUE ~ sentiment )
+  )
+
+DBI::dbWriteTable(
+  conn = con
+  , name = Id(
+    schema = "dbo"
+    , table = "course_sentence_sentimate"
+  )
+  , value = course_sentence_sentimate
+  , overwrite = TRUE
+)
+
+
+
+
+instructor_sentence_sentimate<-instructor_sentence_sentimate %>% 
+  #inner_join(y = Unigram_Afinn_Contribution, b = c("word1" = "word")) %>% 
+  # inner_join(y = Unigram_Afinn_Contribution, b = c("word2" = "word")) %>% 
+  
+  
+  select(instructor_comments,sentiment
+         
+  ) %>% 
+  mutate(
+    # value 
+    instructor_Sentimentt = case_when(is.na(sentiment) ~ 0,
+                                      TRUE ~ sentiment )
+  )
+
+DBI::dbWriteTable(
+  conn = con
+  , name = Id(
+    schema = "dbo"
+    , table = "Instructor_sentence_sentimate"
+  )
+  , value = instructor_sentence_sentimate
+  , overwrite = TRUE
+)
+
+
+
+#Tokenize data set so 1 word per row
+unnested_comments_df <- course_comments_df %>% 
+  unnest_tokens(word,InstructorCommentsTokenized)
+
+
+
+#unnested_comments_df <- unnested_comments_course_df %>% 
+#  unnest_tokens(word_Instructor,InstructorCommentsTokenized)
+
+
+
+#Apply Stop Words
+data(stop_words)
+
+# Add stopwords
+custom.stopwords <- data.frame(
+  word = c('snhu','university','school',
+           'also','make','think','get','thing','one',
+           'just','feel','can','will','impending',
+           'nothing','na','NA ','NA-','change','nigger','bitch','ass','bullshit','shit','dick','rape','fuck','hell','damn','pissed','fucking','piss','damned'
+           ,'fucker','fucked','asshole','final','paper','due','week','class','mid','term','project','exam','posts','due','module','weeks','timing','consuming'
+           ,'pages','1','2','3','4','5','6','7','8','9','10','15','20','11 59 p.m eastern time','1.1','1.2','1.3','1.4','1.5','1.6','1.7','1.8','1.9')
+  , lexicon = 'custom'
+)
+
+# ----- combining stop words
+stop_words <- rbind(
+  stop_words
+  , custom.stopwords
+)
+
+# ----- removing stop words 
+clean_unnested_comments_df <- unnested_comments_df %>%
+  anti_join(stop_words)
+
+# ----- remove nas
+clean_unnested_comments_df <- clean_unnested_comments_df %>% 
+  drop_na()
+
+afinn_words <- clean_unnested_comments_df %>%
+  inner_join(get_sentiments("afinn")) %>%
+  ungroup()
+
+
+bing_word_counts <- afinn_words %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+
+afinn_word_counts <- afinn_words %>%
+  inner_join(get_sentiments("afinn")) %>%
+  count(word, value, sort = TRUE) %>%
+  ungroup()
+
+#Count distribution of unigrams
+
+comment_unigrams <- clean_unnested_comments_df %>%
+  unnest_tokens(word,word, token = "ngrams", n = 1)
+
+comment_unigrams %>%
+  count(word, sort = TRUE) 
+
+unigrams_filtered <- comment_unigrams %>%
+  filter(!word %in% stop_words$word) 
+
+Unigram_Afinn_Counts <- unigrams_filtered %>%
+  inner_join(get_sentiments("afinn")) %>%
+  count(word, value, sort = TRUE) %>%
+  ungroup()
+
+Unigram_Afinn_Contribution <- Unigram_Afinn_Counts %>%
+  inner_join(get_sentiments("afinn")) %>%
+  mutate(contribution = value * n / sum(n))
+
+# create bigrams
+comment_bigrams <- clean_unnested_comments_df %>%
+  unnest_tokens(word,word, token = "ngrams", n = 2)
+
+
+comment_bigrams %>%
+  count(word, sort = TRUE)
+
+bigrams_filtered <- comment_bigrams %>%
+  filter(!word %in% stop_words$word) 
+
+bigrams_separated <- bigrams_filtered %>%
+  separate(word, c("word1", "word2"), sep = " ")
+
+
+
+comment_trigrams <- clean_unnested_comments_df %>%
+  unnest_tokens(word, word, token = "ngrams", n = 3)
+
+comment_trigrams %>%
+  count(word, sort = TRUE)
+
+trigrams_filtered <- comment_trigrams %>%
+  filter(!word %in% stop_words$word) 
+
+trigrams_separated <- comment_trigrams %>%
+  separate(word, c("word1", "word2","word3"), sep = " ")
+
+# Bigram final table to write to MSR database
+Bigrams_Scores<-bigrams_separated %>% 
+  inner_join(y = Unigram_Afinn_Contribution, b = c("word1" = "word")) %>% 
+  inner_join(y = Unigram_Afinn_Contribution, b = c("word2" = "word")) %>% 
+
+  
+  select(
+    TERM
+    ,AcademicLevel
+    ,course_comments
+    ,Course
+    ,Join_Field
+    ,instructor_comments
+    ,datestart
+    ,crsname
+    ,crsnum
+    ,crs_dir
+    ,resp_fac
+    ,RegisterAnotherCourseWithInstructor
+    ,UsedCourseMaterial     
+    ,overall_course_satisfaction
+    ,overall_instructor_satisfaction
+    ,word1
+   , word2
+    ,word_1_value = value.x
+   , word_2_value = value.y
+   , word_1_contribution = contribution.x
+   , word_2_contribution = contribution.y
+
+  ) %>% 
+  mutate(
+    # value 
+    word_1_value_alt = case_when(is.na(word_1_value) ~ 0,
+                                 TRUE ~ word_1_value ),
+    word_2_value_alt = case_when(is.na(word_2_value) ~ 0,
+                                 TRUE ~ word_2_value ),
+    syn_word_value = word_1_value_alt + word_2_value_alt,
+
+    
+    # contribution
+    word_1_contribution_alt = case_when(is.na(word_1_contribution) ~ 0,
+                                 TRUE ~ word_1_contribution ),
+    word_2_contribution_alt = case_when(is.na(word_2_contribution) ~ 0,
+                                 TRUE ~ word_2_contribution ),
+    syn_word_Contribution  = word_1_contribution_alt + word_2_contribution_alt,
+    bigram=paste(word1,word2),
+    
+    
+
+    
+  )
+
+
+DBI::dbWriteTable(
+  conn = con
+  , name = Id(
+    schema = "dbo"
+    , table = "SentimateFacultyBigramScores"
+  )
+  , value = Bigrams_Scores
+  , overwrite = TRUE
+)
+
+
+Bigrams_Scores %>%
+  top_n(400, abs(syn_word_Contribution)) %>%
+  mutate(word = reorder(bigram, syn_word_Contribution)) %>%
+  ggplot(aes(bigram, syn_word_Contribution, fill = syn_word_Contribution > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip()
+
+
+# trigram final table to write to MSR database
+trigrams_Scores<-trigrams_separated %>%
+inner_join(y = Unigram_Afinn_Contribution, b = c("word1" = "word")) %>%
+inner_join(y = Unigram_Afinn_Contribution, b = c("word2" = "word")) %>%
+inner_join(y = Unigram_Afinn_Contribution, b = c("word3" = "word")) %>%
+  
+
+select(
+  TERM
+  ,AcademicLevel
+  ,course_comments
+  ,Course
+  ,Join_Field
+  ,instructor_comments
+  ,datestart
+  ,crsname
+  ,crsnum
+  ,crs_dir
+  ,resp_fac
+  ,RegisterAnotherCourseWithInstructor
+  ,UsedCourseMaterial     
+  ,overall_course_satisfaction
+  ,overall_instructor_satisfaction
+   ,word1
+   ,word2
+   ,word3
+  ,word_1_value = value.x
+  , word_2_value = value.y
+  , word_3_value = value
+  , word_1_contribution = contribution.x
+  , word_2_contribution = contribution.y
+  , word_3_contribution = contribution
+  
+) %>% 
+  mutate(
+    # value 
+
+    word_1_value_alt = case_when(is.na(word_1_value) ~ 0,
+                                 TRUE ~ word_1_value ),
+    word_2_value_alt = case_when(is.na(word_2_value) ~ 0,
+                                 TRUE ~ word_2_value ),
+    word_3_value_alt = case_when(is.na(word_3_value) ~ 0,
+                                  TRUE ~ word_3_value ),
+    syn_word_value_Tri = word_1_value_alt + word_2_value_alt +word_3_value_alt,
+    
+    
+    
+    # contribution
+    word_1_contribution_alt = case_when(is.na(word_1_contribution) ~ 0,
+                                        TRUE ~ word_1_contribution ),
+    word_2_contribution_alt = case_when(is.na(word_2_contribution) ~ 0,
+                                        TRUE ~ word_2_contribution ),
+    word_3_contribution_alt = case_when(is.na(word_3_contribution) ~ 0,
+                                         TRUE ~ word_3_contribution ),
+    syn_word_Contribution_tri  = word_1_contribution_alt + word_2_contribution_alt + word_3_contribution_alt,
+    trigram=paste(word1,word2,word3),
+    
+
+    
+  )
+
+
+DBI::dbWriteTable(
+  conn = con
+  , name = Id(
+    schema = "dbo" 
+    , table = "SentimateFacultytTrigramScores"
+  )
+  , value = trigrams_Scores
+  , overwrite = TRUE
+)
+
+
+
+trigrams_Scores %>%
+  top_n(50, abs(syn_word_Contribution_tri)) %>%
+  mutate(word = reorder(trigram, syn_word_Contribution_tri)) %>%
+  ggplot(aes(trigram, syn_word_Contribution_tri, fill = syn_word_Contribution_tri > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip()
+
+#Create Trigrams
+
+comment_trigrams <- clean_unnested_comments_df %>%
+  unnest_tokens(word, word, token = "ngrams", n = 3)
+
+comment_trigrams %>%
+  count(word, sort = TRUE)
+
+trigrams_filtered <- comment_trigrams %>%
+  filter(!word %in% stop_words$word) 
+
+trigrams_separated <- comment_trigrams %>%
+  separate(word, c("word1", "word2","word3"), sep = " ")
+
+trigrams_Scores %>%
+  top_n(30, abs(syn_word_Contribution_tri)) %>%
+  mutate(word = reorder(trigram, syn_word_Contribution_tri)) %>%
+  ggplot(aes(trigram, syn_word_Contribution_tri, fill = syn_word_Contribution_tri > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip()
+
+
+#*********************************GRAPHS***********************************************************************************************************
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Count",
+       x = "Word") +
+  coord_flip()
+
+afinn_word_counts %>%
+  group_by(value) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = value)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~value, scales = "free_y") +
+  labs(y = "word",
+       x = "count") +
+  coord_flip()
+
+#Frequency distibution of ngrams graph
+unigrams_filtered  %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 3000) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  labs(y = "Count",
+       x = "Word") +
+  coord_flip()
+
+bigrams_filtered %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 250) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  labs(y = "Count",
+       x = "bigram") +
+  coord_flip()
+
+trigrams_filtered  %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 30) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  labs(y = "Count",
+       x = "trigram") +
+  coord_flip()
+
+#ngrams Word Cloud
+
+unigrams_filtered %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.word = 50))
+
+bigrams_filtered %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.word= 50))
+
+trigrams_filtered %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.word= 50))
+
+# unigram word cloud by negative or positive
+
+unigrams_filtered %>% 
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+ comparison.cloud(colors = c("red", "green"),
+                   max.words = 100)
+
+unigrams_filtered %>% 
+  inner_join(get_sentiments("afinn")) %>%
+  count(word, value, sort = TRUE) %>%
+  acast(word ~ value, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("red","red","red","red","orange","green","green","green","green"),
+                   max.words = 100)
+
+#cONTRIBUTION gRAPHS
+Unigram_Afinn_Values <- unigrams_filtered %>%
+  inner_join(get_sentiments("afinn")) %>%
+  count(word, value, sort = TRUE) %>%
+  ungroup()
+
+Unigram_Afinn_Contribution <- Unigram_Afinn_Values %>%
+  inner_join(get_sentiments("afinn")) %>%
+  mutate(contribution = value * n / sum(n))
+
+Unigram_Afinn_Contribution %>%
+  top_n(30, abs(contribution)) %>%
+  mutate(word = reorder(word, contribution)) %>%
+  ggplot(aes(word, contribution, fill = contribution > 0)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip()
