@@ -60,7 +60,7 @@ CommentWordsClean2 %>%
 
 
 
-#Leicon Stuff
+#Lexicon Stuff
 get_sentiments("nrc")
 
 nrc_fear <- get_sentiments("nrc") %>% 
